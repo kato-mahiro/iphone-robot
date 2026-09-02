@@ -1,0 +1,55 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment variables and local secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+.certs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# JavaScript / web application
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/cache/
+dist/
+build/
+coverage/
+.next/
+.vite/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Generated CAD and 3D-print exports
+exports/
+output/
+*.f3d.lock
+*.bak
