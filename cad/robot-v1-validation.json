@@ -1,0 +1,112 @@
+{
+  "baseline_issues": [],
+  "edit_checks": [
+    {
+      "parameter": "RB_EyeWidth",
+      "test_value": "22 mm",
+      "compute_ok": true,
+      "issues": []
+    },
+    {
+      "parameter": "RB_EyeY",
+      "test_value": "33 mm",
+      "compute_ok": true,
+      "issues": []
+    },
+    {
+      "parameter": "RB_BellyWidth",
+      "test_value": "46 mm",
+      "compute_ok": true,
+      "issues": []
+    },
+    {
+      "parameter": "RB_BellyY",
+      "test_value": "-2 mm",
+      "compute_ok": true,
+      "issues": []
+    },
+    {
+      "parameter": "RB_TalkDiameter",
+      "test_value": "26 mm",
+      "compute_ok": true,
+      "issues": []
+    },
+    {
+      "parameter": "RB_TalkY",
+      "test_value": "-34 mm",
+      "compute_ok": true,
+      "issues": []
+    },
+    {
+      "parameter": "RB_Clearance",
+      "test_value": "0.5 mm",
+      "compute_ok": true,
+      "issues": []
+    },
+    {
+      "parameter": "RB_Tilt",
+      "test_value": "15 deg",
+      "compute_ok": true,
+      "issues": []
+    },
+    {
+      "parameter": "RB_BaseDepth",
+      "test_value": "95 mm",
+      "compute_ok": true,
+      "issues": []
+    },
+    {
+      "parameter": "RB_BodyWidth",
+      "test_value": "84 mm",
+      "compute_ok": true,
+      "issues": []
+    }
+  ],
+  "interferences": [],
+  "parts": [
+    {
+      "component": "Robot V1 - A Holder and Stand",
+      "solid": true,
+      "volume_cm3": 84.12538293132229,
+      "bounds_mm": {
+        "min": [
+          -50.0,
+          -109.16015463663122,
+          -68.4703320513664
+        ],
+        "max": [
+          50.0,
+          74.00000000000003,
+          20.39459877794716
+        ]
+      },
+      "sketches": 21,
+      "features": 21
+    },
+    {
+      "component": "Robot V1 - B Front Cover",
+      "solid": true,
+      "volume_cm3": 23.060996975288127,
+      "bounds_mm": {
+        "min": [
+          -46.0,
+          -74.00000000000003,
+          7.710000000000001
+        ],
+        "max": [
+          46.0,
+          74.00000000000001,
+          10.110000000000001
+        ]
+      },
+      "sketches": 13,
+      "features": 14
+    }
+  ],
+  "limitations": [
+    "Model-based collision check only; actual SE2 fit unverified",
+    "Cable, screws, nuts and pads are not modeled",
+    "STL support, stability, audio, thermal and screen alignment need physical testing",
+    "CAD material density is not calibrated to PLA or printer infill"
+  ]
+}

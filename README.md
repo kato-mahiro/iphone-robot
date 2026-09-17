@@ -142,6 +142,12 @@ iPhone画面には、少なくとも次の状態を用意する。
 
 STEPでは正確なB-Rep形状を受け渡せるが、Pythonコード側の変数や作成履歴はFusion 360へ引き継がれない。設計履歴の本体はPythonコードとして保持し、形状変更時にはSTEPを再出力する。3Dプリント直前にSTLまたは3MFへ変換する。
 
+### 現在のケース試作（V1）
+
+白PLA用の「スタンド一体ホルダー＋前面カバー」をFusionの履歴・寸法パラメータ付きで作成した。編集用原本は `cad/phone-robot-case-v1.f3d`。部品別のSTEP・造形姿勢のSTLも `cad/` にある。
+
+寸法、変更方法、組み立て・印刷上の注意、未検証事項は [ケースV1の設計メモ](docs/robot-case-v1.md) を参照。**各穴の寸法・種類・役割と、画面左上基準の配置は [開口部の寸法・配置仕様](docs/robot-case-v1-openings.md)** にまとめている。既存のFusion参照モデル名はSE第3世代のため、SE第2世代実機への装着は別途確認する。
+
 ## 10. MVPに含めない機能
 
 次の機能は、会話体験が安定して完成した後、時間に余裕がある場合のみ追加する。
@@ -211,3 +217,26 @@ iPhoneとMac間の音声認識はローカルで完結するが、LLMと音声�
 本プロジェクトでは、ロボットの機構的な複雑さではなく、会話の応答速度、キャラクターらしさ、展示中の安定性を完成度の中心とする。
 
 まず「押して話すと、すぐにキャラクターとして音声で返答する」という一本の体験を完成させる。その後に記憶、表情、外装、カメラなどを加え、途中段階でも展示可能な状態を維持しながら開発する。
+
+## 15. iPhone用Web画面（実装済み）
+
+`web/` に、押している間のマイク音声をHayamimiへ送る最小のSafari画面を用意している。
+音声はブラウザ側でモノラル16kHz・PCM signed 16-bit little-endianへ変換し、
+`/ingest` のWebSocketへ送信する。Hayamimiから返るpartial/final/refineイベントは画面に表示する。
+
+Macで静的ページを配信するには、プロジェクトルートから次を実行する。
+
+```bash
+python3 scripts/serve_robot_web.py --host 0.0.0.0 --port 8080
+```
+
+Hayamimiは別ターミナルでLAN接続を許可して起動する。
+
+```bash
+cd hayamimi
+.venv/bin/python scripts/realtime_transcribe.py --input ws --ws-host 0.0.0.0 --serve --lang ja
+```
+
+Safariでは `http://<MacのIPアドレス>:8080/` を開く。iPhoneのマイク利用にはHTTPSが必要なため、
+実機テストや展示ではCaddyなどでWeb画面をHTTPS配信し、WebSocketもWSSで中継する。
+接続先は画面下部の「接続設定」から変更できる。

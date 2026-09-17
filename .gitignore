@@ -47,6 +47,11 @@ coverage/
 *.log
 *.tmp
 *.temp
+*.ses
+
+# External project working copies
+hayamimi/
+piper-plus/
 
 # Generated CAD and 3D-print exports
 exports/
