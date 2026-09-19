@@ -13,6 +13,8 @@
   const connectionDot = $("connection-dot");
   const connectionLabel = $("connection-label");
   const debugLog = $("debug-log");
+  const bellyMain = $("belly-main");
+  const diagnostics = $("diagnostics");
 
   let audioContext;
   let mediaStream;
@@ -241,6 +243,15 @@
   button.addEventListener("pointerleave", (event) => { if (isTalking) stopTalking(event); });
   button.addEventListener("keydown", (event) => { if ((event.key === "Enter" || event.key === " ") && !event.repeat) startTalking(event); });
   button.addEventListener("keyup", (event) => { if (event.key === "Enter" || event.key === " ") stopTalking(event); });
+  document.querySelectorAll(".belly-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const showLog = tab.dataset.view === "log";
+      bellyMain.hidden = showLog;
+      diagnostics.hidden = !showLog;
+      document.querySelectorAll(".belly-tab").forEach((item) => item.classList.toggle("selected", item === tab));
+      if (showLog) debugLog.scrollTop = debugLog.scrollHeight;
+    });
+  });
   window.addEventListener("beforeunload", () => {
     clearTimeout(silenceTimer);
     clearTimeout(closeTimer);
