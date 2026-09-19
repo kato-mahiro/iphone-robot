@@ -77,12 +77,19 @@ LANから接続する1-2では `--ws-host 0.0.0.0` に変更する。`/ingest` �
 
 ### 1-2. iPhoneからHayamimiへ送る
 
-- [ ] MacとiPhoneを持参ルーターへ接続する
-- [ ] HTTPSでWeb画面を配信し、Safariでマイク権限を取得する
-- [ ] WSSでiPhoneからMacへ接続する
-- [ ] 押下中だけ音声を送信する
-- [ ] ボタンを離した後に発話を確定させる
-- [ ] `final` の日本語テキストをiPhone画面へ表示する
+- [x] MacとiPhoneを持参ルーターへ接続する
+- [x] HTTPSでWeb画面を配信し、Safariでマイク権限を取得する
+- [x] WSSでiPhoneからMacへ接続する
+- [x] 押下中だけ音声を送信する
+- [x] ボタンを離した後に発話を確定させる
+- [x] `final` の日本語テキストをiPhone画面へ表示する
+
+#### 1-2 検証記録（2026-09-20）
+
+iPhone Safariの音声をWSSでMacへ送り、Hayamimiの `ja/rz` で確定した日本語を
+SSE経由でiPhoneへ表示できた。起動はプロジェクトルートの
+`./scripts/start_voice_stack.sh` に統一した。表示されるBonjour URLを使用するため、
+MacのIPアドレスがDHCPで変わっても設定変更は不要。
 
 ### フェーズ1の完了条件
 

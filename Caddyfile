@@ -2,7 +2,7 @@
 	skip_install_trust
 }
 
-https://192.168.0.150:8443 {
+https://{$ROBOT_HOST:katoumasahironoMacBook-Air.local}:8443 {
 	tls internal
 	log {
 		output file logs/caddy-access.log

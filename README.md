@@ -232,19 +232,19 @@ iPhoneとMac間の音声認識はローカルで完結する。jevをクラウ�
 音声はブラウザ側でモノラル16kHz・PCM signed 16-bit little-endianへ変換し、
 `/ingest` のWebSocketへ送信する。認識途中のpartialは表示せず、確定したfinal/refineだけを表示する。jev連携、感情演出、ローカルビープ音、返答表示はこれから実装する。
 
-Macで静的ページを配信するには、プロジェクトルートから次を実行する。
+Macで音声経路全体を起動するには、プロジェクトルートから次を実行する。
 
 ```bash
-python3 scripts/serve_robot_web.py --host 0.0.0.0 --port 8080
+./scripts/start_voice_stack.sh
 ```
 
-Hayamimiは別ターミナルでLAN接続を許可して起動する。
+起動後に表示される `https://<MacのBonjour名>.local:8443/` をiPhone Safariで開く。
+Bonjour名を使うため、ルーターのDHCPでMacのIPアドレスが変わってもURLとCaddyfileの変更は不要。
+終了は `Ctrl-C`。Hayamimiの文字起こしは `logs/hayamimi.log`、iPhoneの診断イベントは
+`logs/caddy-access.log` に記録される。
+
+Bonjourが使えないネットワークでは、現在のMacのIPアドレスを一時指定して起動できる。
 
 ```bash
-cd hayamimi
-.venv/bin/python scripts/realtime_transcribe.py --input ws --ws-host 0.0.0.0 --serve --lang ja
+ROBOT_HOST=192.168.0.150 ./scripts/start_voice_stack.sh
 ```
-
-Safariでは `http://<MacのIPアドレス>:8080/` を開く。iPhoneのマイク利用にはHTTPSが必要なため、
-実機テストや展示ではCaddyなどでWeb画面をHTTPS配信し、WebSocketもWSSで中継する。
-接続先は画面下部の「接続設定」から変更できる。
