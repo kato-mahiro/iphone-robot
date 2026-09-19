@@ -230,7 +230,7 @@ iPhoneとMac間の音声認識はローカルで完結する。jevをクラウ�
 
 `web/` に、押している間のマイク音声をHayamimiへ送る最小のSafari画面を用意している。
 音声はブラウザ側でモノラル16kHz・PCM signed 16-bit little-endianへ変換し、
-`/ingest` のWebSocketへ送信する。現在はHayamimiから返るpartial/final/refineイベントを表示する段階で、jev連携、感情演出、ローカルビープ音、返答表示はこれから実装する。
+`/ingest` のWebSocketへ送信する。認識途中のpartialは表示せず、確定したfinal/refineだけを表示する。jev連携、感情演出、ローカルビープ音、返答表示はこれから実装する。
 
 Macで静的ページを配信するには、プロジェクトルートから次を実行する。
 

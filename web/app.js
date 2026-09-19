@@ -3,7 +3,7 @@
 
   const SAMPLE_RATE = 16000;
   const SILENCE_MS = 900;
-  const FINAL_WAIT_MS = 1800;
+  const FINAL_WAIT_MS = 3000;
   const $ = (id) => document.getElementById(id);
   const button = $("talk-button");
   const panel = document.querySelector(".face-panel");
@@ -12,7 +12,7 @@
   const hint = $("hint");
   const connectionDot = $("connection-dot");
   const connectionLabel = $("connection-label");
-  const wsInput = $("ws-url");
+  const debugLog = $("debug-log");
 
   let audioContext;
   let mediaStream;
@@ -23,9 +23,20 @@
   let stopping = false;
   let silenceTimer;
   let closeTimer;
+  let audioChunks = 0;
+  let startAttempt = 0;
+  let receivedFinalThisPress = false;
 
-  const defaultWs = `${location.protocol === "https:" ? "wss" : "ws"}://${location.hostname}:8766/ingest`;
-  wsInput.value = localStorage.getItem("robot-ws-url") || defaultWs;
+  const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ingest`;
+  const events = new EventSource("/events");
+
+  function log(message) {
+    const time = new Date().toLocaleTimeString("ja-JP", { hour12: false });
+    const line = `${time} ${message}`;
+    debugLog.textContent += `${line}\n`;
+    debugLog.scrollTop = debugLog.scrollHeight;
+    fetch(`/client-log?message=${encodeURIComponent(line)}`, { method: "POST", keepalive: true }).catch(() => {});
+  }
 
   function setConnection(connected, label) {
     connectionDot.classList.toggle("ready", connected);
@@ -36,6 +47,14 @@
     stateLabel.textContent = label;
     transcript.textContent = text;
     panel.classList.toggle("listening", mode === "listening");
+  }
+
+  function closeSocket() {
+    log(`WSSを閉じます（音声 ${audioChunks} chunks）`);
+    socket?.close();
+    socket = null;
+    stopping = false;
+    setConnection(false, "待機中");
   }
 
   function floatToPcm16(samples) {
@@ -63,60 +82,116 @@
   }
 
   function sendSilence() {
-    if (socket?.readyState !== WebSocket.OPEN) return;
+    if (socket?.readyState !== WebSocket.OPEN) {
+      log(`無音送信失敗: WSS state=${socket?.readyState ?? "なし"}`);
+      return;
+    }
     socket.send(new ArrayBuffer(Math.round(SAMPLE_RATE * (SILENCE_MS / 1000)) * 2));
+    log(`${SILENCE_MS}msの無音を送信`);
   }
 
   function handleEvent(event) {
     let data;
-    try { data = JSON.parse(event.data); } catch { return; }
+    try { data = JSON.parse(event.data); } catch {
+      log("受信JSONを解析できません");
+      return;
+    }
+    if (data.type !== "partial") log(`受信: ${data.type}${data.text ? `「${data.text}」` : ""}`);
     if (data.type === "ready") {
       setConnection(true, "接続中");
       hint.textContent = "押している間に話してください";
     } else if (data.type === "partial") {
-      setState("聞き取り中…", data.text || "", "listening");
+      setState("聞き取り中…", "話しかけてね", "listening");
     } else if (data.type === "final" || data.type === "refine") {
+      receivedFinalThisPress = true;
+      clearTimeout(closeTimer);
       setState("聞こえたよ", data.text || "");
       hint.textContent = data.type === "final" ? "もう一度話すと続けられます" : hint.textContent;
+      if (stopping) closeTimer = setTimeout(closeSocket, 300);
     }
   }
 
+  events.addEventListener("open", () => log("文字起こし結果の受信接続成功"));
+  events.addEventListener("message", handleEvent);
+  events.addEventListener("error", () => log("文字起こし結果の受信接続エラー"));
+
   async function openSocket() {
-    const url = wsInput.value.trim();
-    if (!url) throw new Error("WebSocketの接続先が空です");
-    socket = new WebSocket(url);
+    log(`WSS接続開始: ${wsUrl}`);
+    socket = new WebSocket(wsUrl);
     socket.binaryType = "arraybuffer";
     await new Promise((resolve, reject) => {
-      socket.addEventListener("open", resolve, { once: true });
+      socket.addEventListener("open", () => {
+        log("WSS接続成功");
+        resolve();
+      }, { once: true });
       socket.addEventListener("error", () => reject(new Error("Hayamimiへ接続できません")), { once: true });
     });
-    socket.addEventListener("message", handleEvent);
-    socket.addEventListener("close", () => setConnection(false, "未接続"));
+    socket.addEventListener("close", (event) => {
+      log(`WSS切断: code=${event.code}`);
+      socket = null;
+      setConnection(false, "未接続");
+    });
+    socket.addEventListener("message", (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "ready") {
+          log("音声送信準備完了");
+          setConnection(true, "接続中");
+        }
+      } catch {}
+    });
     socket.send(JSON.stringify({ sr: SAMPLE_RATE, format: "pcm_s16le", channels: 1 }));
   }
 
   async function startTalking(event) {
     event?.preventDefault();
-    if (isTalking || stopping) return;
+    if (event?.pointerId != null) button.setPointerCapture(event.pointerId);
+    log(`${event?.type || "操作"}: 録音開始要求`);
+    if (isTalking || stopping) {
+      log(`開始を無視: isTalking=${isTalking}, stopping=${stopping}`);
+      return;
+    }
     isTalking = true;
+    const attempt = ++startAttempt;
+    audioChunks = 0;
+    receivedFinalThisPress = false;
+    clearTimeout(closeTimer);
     button.classList.add("pressed");
     setState("聞いてるよ", "話しかけてね", "listening");
     hint.textContent = "話し終わったらボタンを離してください";
     try {
       if (!audioContext) audioContext = new AudioContext();
-      if (audioContext.state === "suspended") await audioContext.resume();
-      if (!mediaStream) mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+      const resume = audioContext.state === "suspended" ? audioContext.resume() : Promise.resolve();
+      let microphone = Promise.resolve(mediaStream);
+      if (!mediaStream) {
+        log("マイク許可を要求");
+        microphone = navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+      }
+      [mediaStream] = await Promise.all([microphone, resume]);
+      log(`マイク取得成功 / AudioContext: ${audioContext.state}, ${audioContext.sampleRate}Hz`);
+      if (!isTalking || attempt !== startAttempt) {
+        log("録音開始をキャンセル: 準備中にボタンが離されました");
+        return;
+      }
       await openSocket();
+      if (!isTalking || attempt !== startAttempt) {
+        log("録音開始をキャンセル: WSS接続中にボタンが離されました");
+        return;
+      }
       source = audioContext.createMediaStreamSource(mediaStream);
       processor = audioContext.createScriptProcessor(2048, 1, 1);
       processor.onaudioprocess = (audioEvent) => {
         if (!isTalking || socket?.readyState !== WebSocket.OPEN) return;
         const mono = audioEvent.inputBuffer.getChannelData(0);
         socket.send(floatToPcm16(downsample(mono, audioContext.sampleRate)));
+        audioChunks += 1;
+        if (audioChunks === 1 || audioChunks % 25 === 0) log(`音声送信: ${audioChunks} chunks`);
       };
       source.connect(processor);
       processor.connect(audioContext.destination);
     } catch (error) {
+      log(`エラー: ${error.name || "Error"}: ${error.message || error}`);
+      if (attempt !== startAttempt) return;
       isTalking = false;
       button.classList.remove("pressed");
       setState("マイクを使えません", "設定を確認して、もう一度試してね");
@@ -127,22 +202,37 @@
 
   function stopTalking(event) {
     event?.preventDefault();
-    if (!isTalking) return;
+    log(`${event?.type || "操作"}: 録音終了要求`);
+    if (!isTalking) {
+      log("終了を無視: 録音中ではありません");
+      return;
+    }
     isTalking = false;
-    stopping = true;
     button.classList.remove("pressed");
     if (source) source.disconnect();
     if (processor) { processor.disconnect(); processor.onaudioprocess = null; }
-    sendSilence();
-    setState("考え中…", "ちゃんと聞こえたかな？");
-    hint.textContent = "返事を考えています";
-    clearTimeout(closeTimer);
-    closeTimer = setTimeout(() => {
+    if (audioChunks === 0) {
+      startAttempt += 1;
       socket?.close();
       socket = null;
       stopping = false;
-      setConnection(false, "待機中");
-    }, FINAL_WAIT_MS);
+      setState("まだ準備中でした", "もう一度、押したまま話してね");
+      hint.textContent = "マイク準備後に話し始めます";
+      return;
+    }
+    stopping = true;
+    sendSilence();
+    clearTimeout(closeTimer);
+    if (receivedFinalThisPress) {
+      closeTimer = setTimeout(closeSocket, 300);
+    } else {
+      setState("認識中…", "文字起こしを待っています");
+      hint.textContent = "そのまま少し待ってください";
+      closeTimer = setTimeout(() => {
+        setState("聞き取れませんでした", "もう一度話してね");
+        closeSocket();
+      }, FINAL_WAIT_MS);
+    }
   }
 
   button.addEventListener("pointerdown", startTalking);
@@ -151,10 +241,6 @@
   button.addEventListener("pointerleave", (event) => { if (isTalking) stopTalking(event); });
   button.addEventListener("keydown", (event) => { if ((event.key === "Enter" || event.key === " ") && !event.repeat) startTalking(event); });
   button.addEventListener("keyup", (event) => { if (event.key === "Enter" || event.key === " ") stopTalking(event); });
-  $("save-settings").addEventListener("click", () => {
-    localStorage.setItem("robot-ws-url", wsInput.value.trim());
-    hint.textContent = "接続先を保存しました";
-  });
   window.addEventListener("beforeunload", () => {
     clearTimeout(silenceTimer);
     clearTimeout(closeTimer);
@@ -162,4 +248,5 @@
     mediaStream?.getTracks().forEach((track) => track.stop());
   });
   setConnection(false, "待機中");
+  log(`起動: secure=${window.isSecureContext}, mediaDevices=${Boolean(navigator.mediaDevices)}`);
 })();

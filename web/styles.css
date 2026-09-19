@@ -79,6 +79,11 @@ button, input { font: inherit; }
 .transcript { margin: 0 auto; max-width: 34ch; color: var(--ink); font-size: 18px; line-height: 1.65; }
 .hint { min-height: 20px; margin: 16px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
 
+.diagnostics { width: 100%; margin-top: 18px; padding: 12px; border: 1px solid #3b4b63; border-radius: 12px; background: #080d16; }
+.diagnostics-title { margin-bottom: 8px; color: var(--cyan); font: 700 12px ui-monospace, monospace; }
+.diagnostics-title span { float: right; color: var(--muted); font-weight: 400; }
+#debug-log { height: 160px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #d9e5f5; font: 11px/1.5 ui-monospace, monospace; }
+
 .talk-button {
   position: relative;
   width: min(82vw, 360px);
@@ -100,12 +105,6 @@ button, input { font: inherit; }
 .talk-button-ring { position: absolute; width: 16px; height: 16px; left: 24px; top: 30px; border: 2px solid var(--coral); border-radius: 50%; box-shadow: 0 0 12px #ff8e7e88; }
 .talk-button-icon { position: absolute; left: 30px; top: 30px; color: var(--coral); font-size: 5px; }
 .talk-button-text { font-size: 20px; font-weight: 700; letter-spacing: .06em; }
-
-.connection-settings { width: 100%; margin-top: auto; padding-top: 24px; color: var(--muted); font-size: 12px; }
-.connection-settings summary { cursor: pointer; text-align: center; }
-.connection-settings label { display: block; margin: 16px 0 6px; }
-.connection-settings input { width: 100%; padding: 11px; border: 1px solid #3b4b63; border-radius: 10px; background: #0d1523; color: var(--ink); font-size: 12px; }
-.save-button { margin-top: 8px; padding: 8px 14px; border: 1px solid #3b4b63; border-radius: 8px; background: #22324a; color: var(--ink); }
 
 @keyframes blink { 0%, 45%, 52%, 100% { transform: scaleY(1); } 48% { transform: scaleY(.15); } }
 @keyframes speak { from { transform: scaleY(.65); } to { transform: scaleY(1.2); } }

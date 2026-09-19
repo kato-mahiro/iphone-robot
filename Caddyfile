@@ -1,0 +1,29 @@
+{
+	skip_install_trust
+}
+
+https://192.168.0.150:8443 {
+	tls internal
+	log {
+		output file logs/caddy-access.log
+		format json
+	}
+
+	handle /client-log {
+		respond 204
+	}
+
+	handle /ingest {
+		reverse_proxy 127.0.0.1:8766
+	}
+
+	handle /events {
+		reverse_proxy 127.0.0.1:8833
+	}
+
+	handle {
+		header Cache-Control "no-store"
+		root * web
+		file_server
+	}
+}

@@ -30,10 +30,50 @@ iPhoneでボタンを押して話す
 
 ### 1-1. Hayamimi単体を確認する
 
-- [ ] Mac上でHayamimiを起動し、内蔵マイクの日本語を認識できる
-- [ ] HayamimiをWebSocket入力モードで起動できる
-- [ ] 既知のPCM音声を送り、`partial` と `final` のイベント形式を確認する
-- [ ] 使用する起動コマンド、ポート、イベント例を記録する
+- [x] Mac上でHayamimiを起動し、内蔵マイクの日本語を認識できる
+- [x] HayamimiをWebSocket入力モードで起動できる
+- [x] 既知のPCM音声を送り、`partial` と `final` のイベント形式を確認する
+- [x] 使用する起動コマンド、ポート、イベント例を記録する
+
+#### 1-1 検証記録（2026-09-20）
+
+M2 MacBook Air上のHayamimi `6f4f7e5`、Python 3.12.9、minimalモデルで確認した。
+
+内蔵マイク入力は次のコマンドで起動する。Macの読み上げ音声をマイクに入力し、`これは内臓マイクの音声認識テストです。早耳が日本語を認識しています。` という確定結果を得た。
+
+```bash
+cd hayamimi
+.venv/bin/python scripts/realtime_transcribe.py \
+  --input mic --mode single --lang ja --no-refine
+```
+
+WebSocket入力は次のコマンドで起動する。ローカル確認では `127.0.0.1:8766`、ダッシュボードは `127.0.0.1:8833` を使用する。
+
+```bash
+cd hayamimi
+.venv/bin/python scripts/realtime_transcribe.py \
+  --input ws --ws-host 127.0.0.1 --ws-port 8766 \
+  --serve 8833 --mode single --lang ja --no-refine
+```
+
+別ターミナルから付属の既知WAVを送る。
+
+```bash
+cd hayamimi
+.venv/bin/python scripts/ws_mic_client.py \
+  --wav models/sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17/test_wavs/test_ja_2.wav \
+  --host 127.0.0.1 --port 8766 --wait-final 12
+```
+
+実際に受信したイベント形式は次のとおり。1回の送信で `partial` を10件、`final` を4件受信した。
+
+```json
+{"type":"ready","sr":16000}
+{"type":"partial","text":"この機械が"}
+{"type":"final","text":"これはテスト分です。","lang":"ja","speaker":"","latency_ms":1980.0,"tier":"rz"}
+```
+
+LANから接続する1-2では `--ws-host 0.0.0.0` に変更する。`/ingest` に認証はないため、信頼できる持参ルーター内だけで公開する。
 
 ### 1-2. iPhoneからHayamimiへ送る
 
