@@ -8,17 +8,18 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="ぽけっとロボット" />
     <title>ぽけっとロボット</title>
-    <link rel="stylesheet" href="styles.css?v=20260920-8" />
+    <link rel="stylesheet" href="styles.css?v=20260920-13" />
   </head>
   <body>
     <main class="robot-shell">
       <section class="face-panel" aria-label="ロボットの表情">
-        <span class="eye eye-left" aria-hidden="true"></span>
-        <span class="eye eye-right" aria-hidden="true"></span>
+        <span class="eye eye-left" aria-hidden="true"><canvas id="eye-left" width="8" height="8"></canvas></span>
+        <span class="eye eye-right" aria-hidden="true"><canvas id="eye-right" width="8" height="8"></canvas></span>
       </section>
 
       <section class="belly" aria-live="polite">
         <div class="belly-main" id="belly-main">
+          <span class="thinking-indicator" id="thinking-indicator" aria-hidden="true" hidden></span>
           <div class="status-line">
             <span class="status-dot" id="connection-dot"></span>
             <span id="connection-label">準備中</span>
@@ -43,6 +44,6 @@
         <span class="talk-button-text">押して<br />話す</span>
       </button>
     </main>
-    <script src="app.js?v=20260920-8" defer></script>
+    <script src="app.js?v=20260920-20" defer></script>
   </body>
 </html>

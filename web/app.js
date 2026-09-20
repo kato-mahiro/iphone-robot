@@ -4,6 +4,9 @@
   const SAMPLE_RATE = 16000;
   const SILENCE_MS = 900;
   const FINAL_WAIT_MS = 3000;
+  const EMOTION_DECAY_MS = 15000;
+  const EMOTION_VISIBLE_THRESHOLD = 0.15;
+  const BEEP_COOLDOWN_MS = 800;
   const $ = (id) => document.getElementById(id);
   const button = $("talk-button");
   const panel = document.querySelector(".face-panel");
@@ -12,9 +15,14 @@
   const hint = $("hint");
   const connectionDot = $("connection-dot");
   const connectionLabel = $("connection-label");
+  const thinkingIndicator = $("thinking-indicator");
   const debugLog = $("debug-log");
   const bellyMain = $("belly-main");
   const diagnostics = $("diagnostics");
+  const eyeContexts = [$("eye-left"), $("eye-right")].map((canvas) => canvas.getContext("2d"));
+  const emotionLabels = { joy: "喜", anger: "怒", sadness: "哀", fun: "楽" };
+  const emotionColors = { joy: "#b7ff5a", anger: "#ff4b45", sadness: "#57a8ff", fun: "#ffd84a" };
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   let audioContext;
   let mediaStream;
@@ -25,9 +33,24 @@
   let stopping = false;
   let silenceTimer;
   let closeTimer;
+  let beepTimer;
   let audioChunks = 0;
   let startAttempt = 0;
   let receivedFinalThisPress = false;
+  let finalParts = [];
+  let emotionRequest = 0;
+  let responseRequest = 0;
+  let responseController;
+  let isResponding = false;
+  let isThinking = false;
+  let faceMode = "neutral";
+  let faceEmotion = "";
+  let faceArousal = 0;
+  let faceValence = 0;
+  let faceStartedAt = 0;
+  let lastBeepAt = 0;
+  let lastTypingBeepAt = 0;
+  let activeEmotion = "";
 
   const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ingest`;
   const events = new EventSource("/events");
@@ -45,10 +68,190 @@
     connectionLabel.textContent = label;
   }
 
+  function setFace(mode, emotion = "", arousal = 0, valence = 0) {
+    if (mode !== "emotion") clearTimeout(beepTimer);
+    faceMode = mode;
+    faceEmotion = emotion;
+    faceArousal = Math.max(0, Math.min(1, arousal));
+    faceValence = Math.max(-1, Math.min(1, valence));
+    faceStartedAt = performance.now();
+    panel.style.setProperty("--eye-glow", `${emotionColors[emotion] || "#55f6c7"}88`);
+  }
+
+  function setThinking(thinking) {
+    isThinking = thinking;
+    thinkingIndicator.hidden = !thinking;
+    if (thinking) clearTimeout(beepTimer);
+  }
+
+  function drawSprite(context, rows, color, accent = "#eafffb") {
+    context.clearRect(0, 0, 8, 8);
+    rows.forEach((row, y) => [...row].forEach((pixel, x) => {
+      if (pixel === ".") return;
+      context.fillStyle = pixel === "+" ? accent : color;
+      context.fillRect(x, y, 1, 1);
+    }));
+  }
+
+  function neutralSprite(now) {
+    const blink = !reducedMotion && now % 4200 > 4020;
+    return blink
+      ? ["........", "........", "........", ".######.", "........", "........", "........", "........"]
+      : ["........", "..####..", ".######.", ".##++##.", ".##++##.", ".######.", "..####..", "........"];
+  }
+
+  function faceSprite(side, now, arousal = faceArousal) {
+    const speed = 1 + arousal * 2;
+    const tick = reducedMotion ? 0 : Math.floor(now / (180 / speed));
+    if (faceMode === "listening") {
+      const size = tick % 4;
+      return Array.from({ length: 8 }, (_, y) => Array.from({ length: 8 }, (_, x) => {
+        const distance = Math.max(Math.abs(x - 3.5), Math.abs(y - 3.5));
+        return Math.abs(distance - (size + .5)) < .3 ? "#" : ".";
+      }).join(""));
+    }
+    if (faceMode === "emotion" && faceEmotion === "joy") {
+      const smile = ["........", "...##...", "..#..#..", ".#....#.", "#......#", "........", side === 0 ? "+......." : ".......+", "........"];
+      return tick % 4 < 2 ? smile : [...smile.slice(1), "........"];
+    }
+    if (faceMode === "emotion" && faceEmotion === "anger") {
+      const left = ["##......", "####....", "..####..", "...###..", "...###..", "...###..", "........", "........"];
+      const rows = side === 0 ? left : left.map((row) => [...row].reverse().join(""));
+      if (!reducedMotion && tick % 2) return rows.map((row) => side === 0 ? `.${row.slice(0, 7)}` : `${row.slice(1)}.`);
+      return rows;
+    }
+    if (faceMode === "emotion" && faceEmotion === "sadness") {
+      const left = ["......##", "....####", "..####..", "..###...", "..###...", "........", "........", "........"];
+      const rows = side === 0 ? left : left.map((row) => [...row].reverse().join(""));
+      if (!reducedMotion) rows[5 + (tick % 3)] = side === 0 ? "...#...." : "....#...";
+      return rows;
+    }
+    if (faceMode === "emotion" && faceEmotion === "fun") {
+      if ((tick >> 2) % 2 === side) return ["........", "........", "........", ".######.", "........", "........", "........", "........"];
+      return ["...+....", "...#....", ".#.#.#..", "..###...", "#######.", "..###...", ".#.#.#..", "...#...."];
+    }
+    return neutralSprite(now);
+  }
+
+  function currentEmotionScores(now = performance.now()) {
+    const remaining = Math.max(0, 1 - (now - faceStartedAt) / EMOTION_DECAY_MS);
+    return { remaining, valence: faceValence * remaining, arousal: faceArousal * remaining };
+  }
+
+  function renderFace(now) {
+    const color = faceMode === "emotion" ? emotionColors[faceEmotion] : "#55f6c7";
+    if (faceMode === "emotion") {
+      const scores = currentEmotionScores(now);
+      if (scores.remaining <= EMOTION_VISIBLE_THRESHOLD) {
+        setFace("neutral");
+        stateLabel.textContent = "ニュートラル  V=0.00 A=0.00";
+        log("感情: ニュートラル");
+      } else {
+        stateLabel.textContent = `${isThinking ? "考え中… / " : ""}気持ち: ${emotionLabels[faceEmotion]} V=${scores.valence >= 0 ? "+" : ""}${scores.valence.toFixed(2)} A=${scores.arousal.toFixed(2)}`;
+        eyeContexts.forEach((context, side) => drawSprite(context, faceSprite(side, now, scores.arousal), color));
+      }
+    }
+    if (faceMode !== "emotion") eyeContexts.forEach((context, side) => drawSprite(context, faceSprite(side, now), color));
+    requestAnimationFrame(renderFace);
+  }
+
+  function playEmotionBeep(emotion, arousal) {
+    if (!audioContext || Date.now() - lastBeepAt < BEEP_COOLDOWN_MS) return;
+    const patterns = {
+      joy: [[0, 523, .11, "triangle"], [.12, 659, .15, "triangle"]],
+      anger: [[0, 180, .09, "square"], [.11, 140, .12, "square"]],
+      sadness: [[0, 330, .18, "triangle"], [.2, 247, .26, "triangle"]],
+      fun: [[0, 440, .07, "square"], [.08, 660, .07, "square"], [.16, 880, .12, "square"]],
+    };
+    const notes = patterns[emotion];
+    if (!notes) return;
+    lastBeepAt = Date.now();
+    const play = () => notes.forEach(([delay, frequency, duration, type]) => {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      const start = audioContext.currentTime + delay;
+      oscillator.type = type;
+      oscillator.frequency.value = frequency * (.9 + arousal * .2);
+      gain.gain.setValueAtTime(.0001, start);
+      gain.gain.exponentialRampToValueAtTime(.75 + arousal * .25, start + .015);
+      gain.gain.exponentialRampToValueAtTime(.0001, start + duration);
+      oscillator.connect(gain).connect(audioContext.destination);
+      oscillator.start(start);
+      oscillator.stop(start + duration + .02);
+    });
+    if (audioContext.state === "suspended") audioContext.resume().then(play).catch(() => {}); else play();
+  }
+
+  function scheduleEmotionBeeps(emotion, request) {
+    clearTimeout(beepTimer);
+    const arousal = currentEmotionScores().arousal;
+    const delay = 1000 + Math.random() * (2500 - arousal * 1000);
+    beepTimer = setTimeout(() => {
+      if (request !== emotionRequest || faceMode !== "emotion") return;
+      playEmotionBeep(emotion, currentEmotionScores().arousal);
+      scheduleEmotionBeeps(emotion, request);
+    }, delay);
+  }
+
+  function playTypingBeep(index) {
+    if (!audioContext || Date.now() - lastTypingBeepAt < 65) return;
+    const sounds = {
+      joy: [720, "triangle"],
+      anger: [185, "square"],
+      sadness: [300, "sine"],
+      fun: [index % 2 ? 780 : 520, "square"],
+    };
+    const [frequency, type] = sounds[activeEmotion] || [440, "triangle"];
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const start = audioContext.currentTime;
+    oscillator.type = type;
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(.65, start);
+    gain.gain.exponentialRampToValueAtTime(.0001, start + .045);
+    oscillator.connect(gain).connect(audioContext.destination);
+    oscillator.start(start);
+    oscillator.stop(start + .05);
+    lastTypingBeepAt = Date.now();
+  }
+
   function setState(label, text, mode = "") {
     stateLabel.textContent = label;
     transcript.textContent = text;
-    panel.classList.toggle("listening", mode === "listening");
+    if (mode) setFace(mode);
+  }
+
+  async function showEmotion(text) {
+    if (!text) return;
+    const request = ++emotionRequest;
+    const responseAtStart = responseRequest;
+    setThinking(true);
+    setState("気持ちを考え中…", text);
+    try {
+      const response = await fetch("/emotion", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "感情を判定できませんでした");
+      if (request !== emotionRequest) return;
+      activeEmotion = result.emotion;
+      setFace("emotion", result.emotion, result.arousal, result.valence);
+      if (!isResponding) setThinking(false);
+      playEmotionBeep(result.emotion, result.arousal);
+      if (!isResponding) scheduleEmotionBeeps(result.emotion, request);
+      if (responseAtStart === responseRequest) setState(`気持ち: ${emotionLabels[result.emotion] || result.emotion}`, text);
+      log(`感情: ${emotionLabels[result.emotion] || result.emotion} / V=${result.valence.toFixed(2)} A=${result.arousal.toFixed(2)}`);
+    } catch (error) {
+      if (request !== emotionRequest) return;
+      if (responseAtStart === responseRequest) {
+        setThinking(false);
+        setFace("neutral");
+        setState("気持ちを判定できませんでした", text);
+      }
+      log(`感情判定エラー: ${error.message || error}`);
+    }
   }
 
   function closeSocket() {
@@ -57,6 +260,64 @@
     socket = null;
     stopping = false;
     setConnection(false, "待機中");
+  }
+
+  async function respondToSpeech() {
+    const text = finalParts.join(" ").trim();
+    if (!text) return;
+    const request = ++responseRequest;
+    isResponding = true;
+    responseController?.abort();
+    responseController = new AbortController();
+    clearTimeout(beepTimer);
+    setThinking(true);
+    setState("考え中…", "返事を考えています");
+    hint.textContent = "もう少し待ってね";
+    log(`応答入力: ${text}`);
+    try {
+      const response = await fetch("/response", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+        signal: responseController.signal,
+      });
+      if (!response.ok || !response.body) throw new Error(await response.text() || "応答を生成できませんでした");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let answer = "";
+      let index = 0;
+      setState("ロボットの返事", "");
+      while (true) {
+        const { value, done } = await reader.read();
+        const chunk = decoder.decode(value, { stream: !done });
+        for (const character of chunk) {
+          if (request !== responseRequest) return;
+          if (!answer) setThinking(false);
+          answer += character;
+          transcript.textContent = answer;
+          if (!/\s/.test(character)) playTypingBeep(index++);
+          if (!reducedMotion) await new Promise((resolve) => setTimeout(resolve, 35));
+        }
+        if (done) break;
+      }
+      log(`ロボット応答: ${answer}`);
+      isResponding = false;
+      setThinking(false);
+      hint.textContent = "ボタンを押して話を続けてね";
+    } catch (error) {
+      if (error.name === "AbortError" || request !== responseRequest) return;
+      isResponding = false;
+      setThinking(false);
+      setFace("neutral");
+      setState("返事を作れませんでした", "もう一度話しかけてね");
+      hint.textContent = error.message || "応答サーバーを確認してください";
+      log(`応答エラー: ${error.message || error}`);
+    }
+  }
+
+  function finishPress() {
+    closeSocket();
+    respondToSpeech();
   }
 
   function floatToPcm16(samples) {
@@ -106,10 +367,12 @@
       setState("聞き取り中…", "話しかけてね", "listening");
     } else if (data.type === "final" || data.type === "refine") {
       receivedFinalThisPress = true;
+      if (data.type === "final" && data.text) finalParts.push(data.text);
       clearTimeout(closeTimer);
       setState("聞こえたよ", data.text || "");
+      if (data.type === "final") showEmotion(data.text);
       hint.textContent = data.type === "final" ? "もう一度話すと続けられます" : hint.textContent;
-      if (stopping) closeTimer = setTimeout(closeSocket, 300);
+      if (stopping) closeTimer = setTimeout(finishPress, 300);
     }
   }
 
@@ -157,7 +420,16 @@
     const attempt = ++startAttempt;
     audioChunks = 0;
     receivedFinalThisPress = false;
+    finalParts = [];
+    activeEmotion = "";
+    isResponding = false;
+    setThinking(false);
+    emotionRequest += 1;
+    responseRequest += 1;
+    responseController?.abort();
     clearTimeout(closeTimer);
+    clearTimeout(beepTimer);
+    setFace("listening");
     button.classList.add("pressed");
     setState("聞いてるよ", "話しかけてね", "listening");
     hint.textContent = "話し終わったらボタンを離してください";
@@ -199,6 +471,7 @@
       setState("マイクを使えません", "設定を確認して、もう一度試してね");
       hint.textContent = error.message || "マイクの使用を許可してください";
       setConnection(false, "未接続");
+      setFace("neutral");
     }
   }
 
@@ -218,6 +491,7 @@
       socket?.close();
       socket = null;
       stopping = false;
+      setFace("neutral");
       setState("まだ準備中でした", "もう一度、押したまま話してね");
       hint.textContent = "マイク準備後に話し始めます";
       return;
@@ -226,12 +500,15 @@
     sendSilence();
     clearTimeout(closeTimer);
     if (receivedFinalThisPress) {
-      closeTimer = setTimeout(closeSocket, 300);
+      closeTimer = setTimeout(finishPress, 300);
     } else {
       setState("認識中…", "文字起こしを待っています");
+      setThinking(true);
       hint.textContent = "そのまま少し待ってください";
       closeTimer = setTimeout(() => {
         setState("聞き取れませんでした", "もう一度話してね");
+        setThinking(false);
+        setFace("neutral");
         closeSocket();
       }, FINAL_WAIT_MS);
     }
@@ -255,9 +532,12 @@
   window.addEventListener("beforeunload", () => {
     clearTimeout(silenceTimer);
     clearTimeout(closeTimer);
+    clearTimeout(beepTimer);
+    responseController?.abort();
     socket?.close();
     mediaStream?.getTracks().forEach((track) => track.stop());
   });
   setConnection(false, "待機中");
+  requestAnimationFrame(renderFace);
   log(`起動: secure=${window.isSecureContext}, mediaDevices=${Boolean(navigator.mediaDevices)}`);
 })();
