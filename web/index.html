@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="ぽけっとロボット" />
     <title>ぽけっとロボット</title>
-    <link rel="stylesheet" href="styles.css?v=20260920-13" />
+    <link rel="stylesheet" href="styles.css?v=20260920-21" />
   </head>
   <body>
     <main class="robot-shell">
@@ -22,28 +22,40 @@
           <span class="thinking-indicator" id="thinking-indicator" aria-hidden="true" hidden></span>
           <div class="status-line">
             <span class="status-dot" id="connection-dot"></span>
-            <span id="connection-label">準備中</span>
+            <span id="connection-label"></span>
           </div>
-          <p class="state-label" id="state-label">話しかけてね</p>
-          <p class="transcript" id="transcript">下のボタンを押している間に話してね</p>
-          <p class="hint" id="hint">最初にマイクの使用を許可してください</p>
+          <p class="state-label" id="state-label"></p>
+          <p class="transcript" id="transcript"></p>
+          <p class="hint" id="hint"></p>
         </div>
 
         <section class="diagnostics" id="diagnostics" aria-label="診断ログ" hidden>
           <pre id="debug-log"></pre>
         </section>
 
+        <section class="restart-panel" id="restart-panel" aria-label="システム再起動" hidden>
+          <div class="service-status" aria-label="接続状態">
+            <p><span class="service-dot" id="server-status-dot"></span>AI・音声 <strong id="server-status">確認中</strong></p>
+            <p><span class="service-dot" id="hayamimi-status-dot"></span>Hayamimi <strong id="hayamimi-status">確認中</strong></p>
+          </div>
+          <button class="restart-button" id="restart-button" type="button">
+            <span id="restart-status">3秒長押しで再起動</span>
+          </button>
+        </section>
+
         <nav class="belly-tabs" aria-label="表示切り替え">
           <button class="belly-tab selected" type="button" data-view="main">会話</button>
           <button class="belly-tab" type="button" data-view="log">ログ</button>
+          <button class="belly-tab" type="button" data-view="restart">再起動</button>
         </nav>
       </section>
 
       <button class="talk-button" id="talk-button" type="button" aria-label="押している間、話す">
-        <span class="talk-button-icon" aria-hidden="true"></span>
-        <span class="talk-button-text">押して<br />話す</span>
+        <svg class="talk-button-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M9 1h2v1h3v1h1v4h-2V5h-2v7h-1v2H9v1H5v-1H4v-3h1v-1h4V1Z" />
+        </svg>
       </button>
     </main>
-    <script src="app.js?v=20260920-20" defer></script>
+    <script src="app.js?v=20260920-36" defer></script>
   </body>
 </html>

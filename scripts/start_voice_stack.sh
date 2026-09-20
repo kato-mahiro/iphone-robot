@@ -5,21 +5,27 @@ project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 hayamimi_python="$project_dir/hayamimi/.venv/bin/python"
 robot_host=${ROBOT_HOST:-"$(scutil --get LocalHostName).local"}
 transcript_tail_pid=
+restart_file="$project_dir/logs/restart.request"
 
 command -v caddy >/dev/null || { echo "error: caddy is not installed" >&2; exit 1; }
 command -v node >/dev/null || { echo "error: node is not installed" >&2; exit 1; }
 command -v nc >/dev/null || { echo "error: nc is not installed" >&2; exit 1; }
 test -x "$hayamimi_python" || { echo "error: Hayamimi venv is missing" >&2; exit 1; }
+test -x /usr/bin/say || { echo "error: macOS say command is missing" >&2; exit 1; }
 test -f "$project_dir/.env" || { echo "error: .env is missing" >&2; exit 1; }
 
-for port in 8443 8766 8833 8844; do
-	if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-		echo "error: port $port is already in use; stop the existing voice stack first" >&2
-		exit 1
-	fi
-done
+if [ "${ROBOT_MANAGED_RESTART:-}" != 1 ]; then
+	for port in 8443 8766 8833 8844; do
+		if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+			echo "error: port $port is already in use; stop the existing voice stack first" >&2
+			exit 1
+		fi
+	done
+fi
+unset ROBOT_MANAGED_RESTART
 
 mkdir -p "$project_dir/logs"
+rm -f "$restart_file"
 export ROBOT_HOST="$robot_host"
 
 "$hayamimi_python" -u "$project_dir/hayamimi/scripts/realtime_transcribe.py" \
@@ -79,14 +85,40 @@ tail -n 0 -F "$project_dir/logs/hayamimi.log" "$project_dir/logs/jev.log" | awk 
 		print "認識: " $0
 		fflush()
 	}
-	/^JEV出力:|^感情スコア:|^応答入力:|^ロボット応答:/ {
+	/^JEV出力:|^感情スコア:|^応答入力:|^ロボット応答:|^音声合成入力:|^音声合成:/ {
 		print
 		fflush()
 	}
 ' &
 transcript_tail_pid=$!
 
-while kill -0 "$hayamimi_pid" 2>/dev/null && kill -0 "$caddy_pid" 2>/dev/null && kill -0 "$jev_pid" 2>/dev/null; do
+while :; do
+	if [ -f "$restart_file" ]; then
+		echo "restart requested from iPhone"
+		rm -f "$restart_file"
+		cleanup
+		i=0
+		while [ "$i" -lt 10 ]; do
+			ports_busy=false
+			for port in 8443 8766 8833 8844; do
+				if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+					ports_busy=true
+					break
+				fi
+			done
+			[ "$ports_busy" = true ] || break
+			i=$((i + 1))
+			sleep 1
+		done
+		# The restart request itself can keep the Node listener alive for a brief
+		# moment after its parent exits. Require a short, stable release window.
+		sleep 2
+		export ROBOT_MANAGED_RESTART=1
+		exec "$project_dir/scripts/start_voice_stack.sh"
+	fi
+	if ! kill -0 "$hayamimi_pid" 2>/dev/null || ! kill -0 "$caddy_pid" 2>/dev/null || ! kill -0 "$jev_pid" 2>/dev/null; then
+		break
+	fi
 	sleep 1
 done
 

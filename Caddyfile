@@ -21,7 +21,7 @@ https://{$ROBOT_HOST:katoumasahironoMacBook-Air.local}:8443 {
 		reverse_proxy 127.0.0.1:8833
 	}
 
-	@ai path /emotion /response
+	@ai path /emotion /response /speech /restart /health
 	handle @ai {
 		reverse_proxy 127.0.0.1:8844
 	}

@@ -3,7 +3,7 @@
 
   const SAMPLE_RATE = 16000;
   const SILENCE_MS = 900;
-  const FINAL_WAIT_MS = 3000;
+  const FINAL_WAIT_MS = 6000;
   const EMOTION_DECAY_MS = 15000;
   const EMOTION_VISIBLE_THRESHOLD = 0.15;
   const BEEP_COOLDOWN_MS = 800;
@@ -19,6 +19,13 @@
   const debugLog = $("debug-log");
   const bellyMain = $("belly-main");
   const diagnostics = $("diagnostics");
+  const restartPanel = $("restart-panel");
+  const restartButton = $("restart-button");
+  const restartStatus = $("restart-status");
+  const serverStatus = $("server-status");
+  const serverStatusDot = $("server-status-dot");
+  const hayamimiStatus = $("hayamimi-status");
+  const hayamimiStatusDot = $("hayamimi-status-dot");
   const eyeContexts = [$("eye-left"), $("eye-right")].map((canvas) => canvas.getContext("2d"));
   const emotionLabels = { joy: "喜", anger: "怒", sadness: "哀", fun: "楽" };
   const emotionColors = { joy: "#b7ff5a", anger: "#ff4b45", sadness: "#57a8ff", fun: "#ffd84a" };
@@ -34,13 +41,18 @@
   let silenceTimer;
   let closeTimer;
   let beepTimer;
+  let restartTimer;
   let audioChunks = 0;
   let startAttempt = 0;
   let receivedFinalThisPress = false;
+  let awaitingFinal = false;
   let finalParts = [];
   let emotionRequest = 0;
   let responseRequest = 0;
   let responseController;
+  let speechSource;
+  let speechEffects = [];
+  let speechQueue = Promise.resolve();
   let isResponding = false;
   let isThinking = false;
   let faceMode = "neutral";
@@ -51,6 +63,8 @@
   let lastBeepAt = 0;
   let lastTypingBeepAt = 0;
   let activeEmotion = "";
+  let serverReady = false;
+  let hayamimiReady = false;
 
   const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ingest`;
   const events = new EventSource("/events");
@@ -63,9 +77,38 @@
     fetch(`/client-log?message=${encodeURIComponent(line)}`, { method: "POST", keepalive: true }).catch(() => {});
   }
 
-  function setConnection(connected, label) {
-    connectionDot.classList.toggle("ready", connected);
-    connectionLabel.textContent = label;
+  function showReadiness() {
+    const ready = serverReady && hayamimiReady;
+    connectionDot.classList.toggle("ready", ready);
+    connectionLabel.textContent = ready
+      ? "準備OK"
+      : !serverReady && !hayamimiReady
+        ? "準備できていません"
+        : `${serverReady ? "Hayamimi" : "AI・音声"} 未接続`;
+  }
+
+  function setConnection(connected) {
+    setServiceStatus("hayamimi", connected, connected ? "接続中" : "未接続");
+  }
+
+  function setServiceStatus(name, connected, label) {
+    const status = name === "server" ? serverStatus : hayamimiStatus;
+    const dot = name === "server" ? serverStatusDot : hayamimiStatusDot;
+    status.textContent = label;
+    status.classList.toggle("ready", connected);
+    dot.classList.toggle("ready", connected);
+    if (name === "server") serverReady = connected;
+    else hayamimiReady = connected;
+    showReadiness();
+  }
+
+  async function checkServer() {
+    try {
+      const response = await fetch("/health", { cache: "no-store" });
+      setServiceStatus("server", response.ok, response.ok ? "接続中" : "未接続");
+    } catch {
+      setServiceStatus("server", false, "未接続");
+    }
   }
 
   function setFace(mode, emotion = "", arousal = 0, valence = 0) {
@@ -103,6 +146,10 @@
   function faceSprite(side, now, arousal = faceArousal) {
     const speed = 1 + arousal * 2;
     const tick = reducedMotion ? 0 : Math.floor(now / (180 / speed));
+    if (!serverReady || !hayamimiReady) {
+      const row = !reducedMotion && Math.floor(now / 1800) % 2 ? 5 : 4;
+      return Array.from({ length: 8 }, (_, y) => y === row ? ".######." : "........");
+    }
     if (faceMode === "listening") {
       const size = tick % 4;
       return Array.from({ length: 8 }, (_, y) => Array.from({ length: 8 }, (_, x) => {
@@ -139,7 +186,8 @@
   }
 
   function renderFace(now) {
-    const color = faceMode === "emotion" ? emotionColors[faceEmotion] : "#55f6c7";
+    const color = !serverReady || !hayamimiReady ? "#ff6f61" : faceMode === "emotion" ? emotionColors[faceEmotion] : "#55f6c7";
+    panel.style.setProperty("--eye-glow", `${color}88`);
     if (faceMode === "emotion") {
       const scores = currentEmotionScores(now);
       if (scores.remaining <= EMOTION_VISIBLE_THRESHOLD) {
@@ -215,9 +263,95 @@
     lastTypingBeepAt = Date.now();
   }
 
-  function setState(label, text, mode = "") {
+  function splitSpeech(text, flush = false) {
+    const parts = [];
+    let start = 0;
+    for (let index = 0; index < text.length; index += 1) {
+      const character = text[index];
+      if (/[。！？!?]/.test(character) || (character === "、" && index - start >= 17)) {
+        parts.push(text.slice(start, index + 1).trim());
+        start = index + 1;
+      }
+    }
+    if (flush && text.slice(start).trim()) parts.push(text.slice(start).trim());
+    return { parts, rest: flush ? "" : text.slice(start) };
+  }
+
+  function stopSpeech() {
+    [speechSource, ...speechEffects].forEach((node) => {
+      try { node?.stop(); } catch {}
+    });
+    speechSource = null;
+    speechEffects = [];
+  }
+
+  function queueSpeech(text, request) {
+    if (!text) return;
+    const audio = fetch("/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("音声を取得できませんでした");
+      return audioContext.decodeAudioData(await response.arrayBuffer());
+    });
+    audio.catch(() => {});
+    log(`Eddy音声を準備: ${text}`);
+    speechQueue = speechQueue.then(async () => {
+      const buffer = await audio;
+      if (request !== responseRequest) return;
+      await new Promise((resolve) => {
+        const source = audioContext.createBufferSource();
+        const dry = audioContext.createGain();
+        const bandpass = audioContext.createBiquadFilter();
+        const robot = audioContext.createGain();
+        const carrier = audioContext.createOscillator();
+        const modulation = audioContext.createGain();
+        const compressor = audioContext.createDynamicsCompressor();
+        const master = audioContext.createGain();
+
+        source.buffer = buffer;
+        source.playbackRate.value = 1.16;
+        dry.gain.value = .9;
+        bandpass.type = "bandpass";
+        bandpass.frequency.value = 1800;
+        bandpass.Q.value = 1.2;
+        robot.gain.value = .2;
+        carrier.type = "square";
+        carrier.frequency.value = 43;
+        modulation.gain.value = .16;
+        compressor.threshold.value = -18;
+        compressor.ratio.value = 5;
+        compressor.attack.value = .003;
+        compressor.release.value = .14;
+        master.gain.value = 2.8;
+
+        source.connect(dry).connect(compressor);
+        source.connect(bandpass).connect(robot).connect(compressor);
+        carrier.connect(modulation).connect(robot.gain);
+        compressor.connect(master).connect(audioContext.destination);
+
+        speechSource = source;
+        speechEffects = [carrier];
+        source.addEventListener("ended", () => {
+          try { carrier.stop(); } catch {}
+          if (speechSource === source) {
+            speechSource = null;
+            speechEffects = [];
+          }
+          resolve();
+        }, { once: true });
+        carrier.start();
+        source.start();
+        log(`Eddy音声を再生: ${text}`);
+      });
+    }).catch((error) => log(`音声再生エラー: ${error.message || error}`));
+  }
+
+  function setState(label, text, mode = "", kind = "system") {
     stateLabel.textContent = label;
     transcript.textContent = text;
+    transcript.dataset.kind = kind;
     if (mode) setFace(mode);
   }
 
@@ -225,8 +359,7 @@
     if (!text) return;
     const request = ++emotionRequest;
     const responseAtStart = responseRequest;
-    setThinking(true);
-    setState("気持ちを考え中…", text);
+    setState("気持ちを考え中…", text, "", "user");
     try {
       const response = await fetch("/emotion", {
         method: "POST",
@@ -241,25 +374,17 @@
       if (!isResponding) setThinking(false);
       playEmotionBeep(result.emotion, result.arousal);
       if (!isResponding) scheduleEmotionBeeps(result.emotion, request);
-      if (responseAtStart === responseRequest) setState(`気持ち: ${emotionLabels[result.emotion] || result.emotion}`, text);
+      if (responseAtStart === responseRequest) setState(`気持ち: ${emotionLabels[result.emotion] || result.emotion}`, text, "", "user");
       log(`感情: ${emotionLabels[result.emotion] || result.emotion} / V=${result.valence.toFixed(2)} A=${result.arousal.toFixed(2)}`);
     } catch (error) {
       if (request !== emotionRequest) return;
       if (responseAtStart === responseRequest) {
         setThinking(false);
         setFace("neutral");
-        setState("気持ちを判定できませんでした", text);
+        setState("気持ちを判定できませんでした", text, "", "user");
       }
       log(`感情判定エラー: ${error.message || error}`);
     }
-  }
-
-  function closeSocket() {
-    log(`WSSを閉じます（音声 ${audioChunks} chunks）`);
-    socket?.close();
-    socket = null;
-    stopping = false;
-    setConnection(false, "待機中");
   }
 
   async function respondToSpeech() {
@@ -271,7 +396,7 @@
     responseController = new AbortController();
     clearTimeout(beepTimer);
     setThinking(true);
-    setState("考え中…", "返事を考えています");
+    setState("考え中…", "");
     hint.textContent = "もう少し待ってね";
     log(`応答入力: ${text}`);
     try {
@@ -285,11 +410,15 @@
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let answer = "";
+      let speechBuffer = "";
       let index = 0;
-      setState("ロボットの返事", "");
+      setState("ロボットの返事", "", "", "robot");
       while (true) {
         const { value, done } = await reader.read();
         const chunk = decoder.decode(value, { stream: !done });
+        const segments = splitSpeech(speechBuffer + chunk, done);
+        speechBuffer = segments.rest;
+        segments.parts.forEach((part) => queueSpeech(part, request));
         for (const character of chunk) {
           if (request !== responseRequest) return;
           if (!answer) setThinking(false);
@@ -316,7 +445,10 @@
   }
 
   function finishPress() {
-    closeSocket();
+    if (!awaitingFinal) return;
+    awaitingFinal = false;
+    stopping = false;
+    setConnection(true, "接続中");
     respondToSpeech();
   }
 
@@ -364,23 +496,34 @@
       setConnection(true, "接続中");
       hint.textContent = "押している間に話してください";
     } else if (data.type === "partial") {
-      setState("聞き取り中…", "話しかけてね", "listening");
+      setState("聞き取り中…", "", "listening");
     } else if (data.type === "final" || data.type === "refine") {
       receivedFinalThisPress = true;
       if (data.type === "final" && data.text) finalParts.push(data.text);
       clearTimeout(closeTimer);
-      setState("聞こえたよ", data.text || "");
+      setState("聞こえたよ", data.text || "", "", "user");
       if (data.type === "final") showEmotion(data.text);
       hint.textContent = data.type === "final" ? "もう一度話すと続けられます" : hint.textContent;
-      if (stopping) closeTimer = setTimeout(finishPress, 300);
+      if (awaitingFinal) closeTimer = setTimeout(finishPress, 300);
     }
   }
 
-  events.addEventListener("open", () => log("文字起こし結果の受信接続成功"));
+  events.addEventListener("open", () => {
+    setServiceStatus("hayamimi", true, "接続中");
+    log("文字起こし結果の受信接続成功");
+  });
   events.addEventListener("message", handleEvent);
-  events.addEventListener("error", () => log("文字起こし結果の受信接続エラー"));
+  events.addEventListener("error", () => {
+    setServiceStatus("hayamimi", false, "未接続");
+    log("文字起こし結果の受信接続エラー");
+  });
 
   async function openSocket() {
+    if (socket?.readyState === WebSocket.OPEN) {
+      log("既存のWSS接続を再利用");
+      setConnection(true, "接続中");
+      return;
+    }
     log(`WSS接続開始: ${wsUrl}`);
     socket = new WebSocket(wsUrl);
     socket.binaryType = "arraybuffer";
@@ -420,6 +563,7 @@
     const attempt = ++startAttempt;
     audioChunks = 0;
     receivedFinalThisPress = false;
+    awaitingFinal = false;
     finalParts = [];
     activeEmotion = "";
     isResponding = false;
@@ -427,11 +571,13 @@
     emotionRequest += 1;
     responseRequest += 1;
     responseController?.abort();
+    stopSpeech();
+    speechQueue = Promise.resolve();
     clearTimeout(closeTimer);
     clearTimeout(beepTimer);
     setFace("listening");
     button.classList.add("pressed");
-    setState("聞いてるよ", "話しかけてね", "listening");
+    setState("聞いてるよ", "", "listening");
     hint.textContent = "話し終わったらボタンを離してください";
     try {
       if (!audioContext) audioContext = new AudioContext();
@@ -491,12 +637,14 @@
       socket?.close();
       socket = null;
       stopping = false;
+      awaitingFinal = false;
       setFace("neutral");
       setState("まだ準備中でした", "もう一度、押したまま話してね");
       hint.textContent = "マイク準備後に話し始めます";
       return;
     }
     stopping = true;
+    awaitingFinal = true;
     sendSilence();
     clearTimeout(closeTimer);
     if (receivedFinalThisPress) {
@@ -509,7 +657,8 @@
         setState("聞き取れませんでした", "もう一度話してね");
         setThinking(false);
         setFace("neutral");
-        closeSocket();
+        stopping = false;
+        setConnection(true, "接続中");
       }, FINAL_WAIT_MS);
     }
   }
@@ -520,24 +669,99 @@
   button.addEventListener("pointerleave", (event) => { if (isTalking) stopTalking(event); });
   button.addEventListener("keydown", (event) => { if ((event.key === "Enter" || event.key === " ") && !event.repeat) startTalking(event); });
   button.addEventListener("keyup", (event) => { if (event.key === "Enter" || event.key === " ") stopTalking(event); });
+
+  async function restartSystem() {
+    restartButton.classList.remove("holding");
+    restartButton.classList.add("restarting");
+    restartButton.disabled = true;
+    restartStatus.textContent = "再起動中…";
+    sessionStorage.setItem("robot-restart-pending", "1");
+    setServiceStatus("server", false, "再起動中");
+    setServiceStatus("hayamimi", false, "再起動中");
+    setThinking(true);
+    try {
+      const response = await fetch("/restart", { method: "POST", headers: { "x-robot-restart": "hold-3s" } });
+      if (!response.ok) throw new Error("再起動を開始できませんでした");
+      let sawServerDown = false;
+      const waitForServer = setInterval(async () => {
+        try {
+          const ready = await fetch(`/?ready=${Date.now()}`, { cache: "no-store" });
+          if (ready.ok && sawServerDown) {
+            clearInterval(waitForServer);
+            location.reload();
+          }
+        } catch {
+          sawServerDown = true;
+          restartStatus.textContent = "起動を待っています…";
+        }
+      }, 2000);
+    } catch (error) {
+      sessionStorage.removeItem("robot-restart-pending");
+      setThinking(false);
+      restartButton.disabled = false;
+      restartButton.classList.remove("restarting");
+      restartStatus.textContent = error.message || "再起動できませんでした";
+    }
+  }
+
+  function startRestartHold(event) {
+    event.preventDefault();
+    if (restartButton.disabled || restartTimer) return;
+    if (event.pointerId != null) restartButton.setPointerCapture(event.pointerId);
+    restartButton.classList.add("holding");
+    restartStatus.textContent = "そのまま押し続けて…";
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      restartSystem();
+    }, 3000);
+  }
+
+  function cancelRestartHold(event) {
+    event?.preventDefault();
+    if (!restartTimer) return;
+    clearTimeout(restartTimer);
+    restartTimer = null;
+    restartButton.classList.remove("holding");
+    restartStatus.textContent = "3秒長押しで再起動";
+  }
+
+  restartButton.addEventListener("pointerdown", startRestartHold);
+  restartButton.addEventListener("pointerup", cancelRestartHold);
+  restartButton.addEventListener("pointercancel", cancelRestartHold);
+  restartButton.addEventListener("keydown", (event) => { if ((event.key === "Enter" || event.key === " ") && !event.repeat) startRestartHold(event); });
+  restartButton.addEventListener("keyup", (event) => { if (event.key === "Enter" || event.key === " ") cancelRestartHold(event); });
+
   document.querySelectorAll(".belly-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
-      const showLog = tab.dataset.view === "log";
-      bellyMain.hidden = showLog;
-      diagnostics.hidden = !showLog;
+      const view = tab.dataset.view;
+      bellyMain.hidden = view !== "main";
+      diagnostics.hidden = view !== "log";
+      restartPanel.hidden = view !== "restart";
       document.querySelectorAll(".belly-tab").forEach((item) => item.classList.toggle("selected", item === tab));
-      if (showLog) debugLog.scrollTop = debugLog.scrollHeight;
+      if (view === "log") debugLog.scrollTop = debugLog.scrollHeight;
+      if (view === "restart") checkServer();
+      if (view !== "restart") cancelRestartHold();
     });
   });
   window.addEventListener("beforeunload", () => {
     clearTimeout(silenceTimer);
     clearTimeout(closeTimer);
     clearTimeout(beepTimer);
+    clearTimeout(restartTimer);
     responseController?.abort();
+    stopSpeech();
     socket?.close();
     mediaStream?.getTracks().forEach((track) => track.stop());
   });
   setConnection(false, "待機中");
+  checkServer();
+  setInterval(checkServer, 5000);
+  if (sessionStorage.getItem("robot-restart-pending")) {
+    sessionStorage.removeItem("robot-restart-pending");
+    document.querySelector('[data-view="restart"]').click();
+    restartStatus.textContent = "再起動完了";
+    setTimeout(() => { restartStatus.textContent = "3秒長押しで再起動"; }, 5000);
+  }
   requestAnimationFrame(renderFace);
   log(`起動: secure=${window.isSecureContext}, mediaDevices=${Boolean(navigator.mediaDevices)}`);
 })();

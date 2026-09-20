@@ -1,5 +1,10 @@
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { readFile, unlink } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { experimental_evaluate as evaluate, streamText } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
@@ -12,8 +17,10 @@ if (!process.env.AI_GATEWAY_API_KEY) throw new Error("AI_GATEWAY_API_KEY が設�
 if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY が設定されていません");
 
 const port = Number(process.env.JEV_PORT || 8844);
+const restartFile = new URL("../logs/restart.request", import.meta.url);
 const decayMs = 15_000;
 const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
+const run = promisify(execFile);
 let emotionState = { valence: 0, arousal: 0 };
 let stateUpdatedAt = Date.now();
 
@@ -25,6 +32,19 @@ function updateEmotionState(valence, arousal, now = Date.now()) {
   return emotionState;
 }
 
+async function synthesizeSpeech(text) {
+  const path = `${tmpdir()}/iphone-robot-${randomUUID()}.aiff`;
+  const startedAt = Date.now();
+  try {
+    await run("/usr/bin/say", ["-v", "Eddy (日本語（日本）)", "-r", "300", "-o", path, text]);
+    const audio = await readFile(path);
+    console.log(`音声合成: Eddy ${(Date.now() - startedAt) / 1000}s ${audio.length}bytes`);
+    return audio;
+  } finally {
+    await unlink(path).catch(() => {});
+  }
+}
+
 if (process.argv.includes("--self-test")) {
   const state = updateEmotionState(1, 1, stateUpdatedAt);
   if (state.valence !== 0.3 || state.arousal !== 0.3) throw new Error("感情スコア更新テスト失敗");
@@ -32,8 +52,22 @@ if (process.argv.includes("--self-test")) {
   process.exit(0);
 }
 
-createServer((request, response) => {
-  if (request.method !== "POST" || !["/emotion", "/response"].includes(request.url)) {
+const server = createServer((request, response) => {
+  if (request.method === "GET" && (request.url === "/health" || request.url.startsWith("/health?"))) {
+    response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    response.end(JSON.stringify({ ok: true }));
+    return;
+  }
+  if (request.method === "POST" && request.url === "/restart" && request.headers["x-robot-restart"] === "hold-3s") {
+    response.writeHead(202, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({ restarting: true }));
+    setTimeout(() => {
+      server.close(() => writeFileSync(restartFile, new Date().toISOString()));
+      server.closeAllConnections();
+    }, 250);
+    return;
+  }
+  if (request.method !== "POST" || !["/emotion", "/response", "/speech"].includes(request.url)) {
     response.writeHead(404).end();
     return;
   }
@@ -48,10 +82,21 @@ createServer((request, response) => {
     try {
       const text = JSON.parse(body).text?.trim();
       if (!text || text.length > 4_000) throw new Error("発話内容が空か、長すぎます");
+      if (request.url === "/speech") {
+        console.log(`音声合成入力: ${text}`);
+        const audio = await synthesizeSpeech(text);
+        response.writeHead(200, {
+          "content-type": "audio/aiff",
+          "content-length": audio.length,
+          "cache-control": "no-store",
+        });
+        response.end(audio);
+        return;
+      }
       if (request.url === "/response") {
         console.log(`応答入力: ${text}`);
         const result = streamText({
-          model: openrouter("deepseek/deepseek-v4-flash"),
+          model: openrouter("deepseek/deepseek-v4-flash", { provider: { sort: "latency" } }),
           system: "あなたは小さな展示ロボットです。日本語で親しみやすく、1〜2文、80文字以内で返答してください。絵文字やMarkdownは使いません。",
           prompt: text,
           maxOutputTokens: 120,
@@ -109,7 +154,7 @@ createServer((request, response) => {
       response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
       response.end(JSON.stringify({ emotion, ...current }));
     } catch (error) {
-      console.error(request.url === "/response" ? "応答失敗:" : "判定失敗:", error);
+      console.error(request.url === "/response" ? "応答失敗:" : request.url === "/speech" ? "音声合成失敗:" : "判定失敗:", error);
       if (response.headersSent) response.end();
       else {
         response.writeHead(400, { "content-type": "application/json; charset=utf-8" });
@@ -117,4 +162,6 @@ createServer((request, response) => {
       }
     }
   });
-}).listen(port, "127.0.0.1", () => console.log(`jev server: http://127.0.0.1:${port}`));
+});
+
+server.listen(port, "127.0.0.1", () => console.log(`jev server: http://127.0.0.1:${port}`));
