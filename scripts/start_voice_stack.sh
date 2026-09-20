@@ -85,7 +85,7 @@ tail -n 0 -F "$project_dir/logs/hayamimi.log" "$project_dir/logs/jev.log" | awk 
 		print "認識: " $0
 		fflush()
 	}
-	/^JEV出力:|^感情スコア:|^応答入力:|^ロボット応答:|^音声合成入力:|^音声合成:/ {
+	/^JEV出力:|^感情スコア:|^応答入力:|^ロボット応答:|^会話要約開始:|^会話要約:|^会話要約失敗:|^音声合成入力:|^音声合成:/ {
 		print
 		fflush()
 	}

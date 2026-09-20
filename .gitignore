@@ -45,6 +45,7 @@ coverage/
 
 # Logs and temporary files
 *.log
+*.jsonl
 *.tmp
 *.temp
 *.ses

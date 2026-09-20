@@ -160,19 +160,22 @@ button { font: inherit; }
 .diagnostics { height: 100%; padding: 5% 5% 22%; background: #020607; }
 #debug-log { height: 100%; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #b8d6d2; font: clamp(8px, 2.4vw, 10px)/1.35 ui-monospace, monospace; }
 
-.restart-panel { height: 100%; padding: 8% 8% 22%; text-align: center; color: var(--muted); font: 700 clamp(10px, 3vw, 13px)/1.3 ui-monospace, monospace; }
+.restart-panel { height: 100%; padding: .45rem 6% 42px; text-align: center; color: var(--muted); font: 700 clamp(9px, 2.7vw, 12px)/1.2 ui-monospace, monospace; }
 .restart-panel p { margin: 0 0 8%; }
-.service-status { margin-bottom: 3%; padding: 5% 8%; border: 1px solid #24484c; background: #020809; text-align: left; }
+.service-status { margin-bottom: .45rem; padding: 3% 6%; border: 1px solid #24484c; background: #020809; text-align: left; }
 .service-status p { display: flex; align-items: center; gap: .45rem; margin: 0; }
-.service-status p + p { margin-top: 5%; }
+.service-status p + p { margin-top: 3%; }
 .service-status strong { margin-left: auto; color: #78999a; font-size: .9em; }
 .service-dot { width: .55rem; height: .55rem; border-radius: 50%; background: var(--coral); box-shadow: 0 0 .35rem #ff6f6166; }
 .service-dot.ready { background: var(--mint); box-shadow: 0 0 .4rem #55f6c799; }
 .service-status strong.ready { color: var(--mint); }
-.restart-button { position: relative; width: 72%; padding: .65rem .4rem; overflow: hidden; border: 2px solid var(--coral); border-radius: .2rem; background: #1b1112; color: #ffaaa1; font-weight: 900; touch-action: none; user-select: none; -webkit-user-select: none; }
+.restart-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem; }
+.conversation-reset-button { min-height: 38px; padding: .35rem .25rem; border: 1px solid var(--aqua); border-radius: .2rem; background: #0b1c20; color: var(--aqua); font-weight: 900; }
+.restart-button { position: relative; min-height: 38px; padding: .35rem .25rem; overflow: hidden; border: 2px solid var(--coral); border-radius: .2rem; background: #1b1112; color: #ffaaa1; font-weight: 900; touch-action: none; user-select: none; -webkit-user-select: none; }
 .restart-button::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: var(--coral); transform: scaleX(0); transform-origin: left; }
 .restart-button.holding::after { animation: restart-hold 3s linear forwards; }
 .restart-button.restarting { border-color: var(--aqua); color: var(--aqua); }
+.conversation-reset-button:focus-visible, .restart-button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 @keyframes restart-hold { to { transform: scaleX(1); } }
 
 .talk-button {

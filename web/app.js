@@ -22,6 +22,8 @@
   const restartPanel = $("restart-panel");
   const restartButton = $("restart-button");
   const restartStatus = $("restart-status");
+  const conversationResetButton = $("conversation-reset-button");
+  const conversationResetStatus = $("conversation-reset-status");
   const serverStatus = $("server-status");
   const serverStatusDot = $("server-status-dot");
   const hayamimiStatus = $("hayamimi-status");
@@ -47,6 +49,7 @@
   let receivedFinalThisPress = false;
   let awaitingFinal = false;
   let finalParts = [];
+  let currentTurnId = "";
   let emotionRequest = 0;
   let responseRequest = 0;
   let responseController;
@@ -364,7 +367,7 @@
       const response = await fetch("/emotion", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, turnId: currentTurnId }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "感情を判定できませんでした");
@@ -403,7 +406,7 @@
       const response = await fetch("/response", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, turnId: currentTurnId }),
         signal: responseController.signal,
       });
       if (!response.ok || !response.body) throw new Error(await response.text() || "応答を生成できませんでした");
@@ -565,6 +568,7 @@
     receivedFinalThisPress = false;
     awaitingFinal = false;
     finalParts = [];
+    currentTurnId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
     activeEmotion = "";
     isResponding = false;
     setThinking(false);
@@ -669,6 +673,46 @@
   button.addEventListener("pointerleave", (event) => { if (isTalking) stopTalking(event); });
   button.addEventListener("keydown", (event) => { if ((event.key === "Enter" || event.key === " ") && !event.repeat) startTalking(event); });
   button.addEventListener("keyup", (event) => { if (event.key === "Enter" || event.key === " ") stopTalking(event); });
+
+  async function resetConversation() {
+    conversationResetButton.disabled = true;
+    conversationResetStatus.textContent = "リセット中…";
+    isTalking = false;
+    stopping = false;
+    awaitingFinal = false;
+    isResponding = false;
+    startAttempt += 1;
+    finalParts = [];
+    currentTurnId = "";
+    emotionRequest += 1;
+    responseRequest += 1;
+    responseController?.abort();
+    stopSpeech();
+    speechQueue = Promise.resolve();
+    clearTimeout(closeTimer);
+    clearTimeout(beepTimer);
+    button.classList.remove("pressed");
+    if (source) source.disconnect();
+    if (processor) { processor.disconnect(); processor.onaudioprocess = null; }
+    setThinking(false);
+    setFace("neutral");
+    try {
+      const response = await fetch("/conversation/reset", { method: "POST" });
+      if (!response.ok) throw new Error("会話をリセットできませんでした");
+      setState("会話をリセットしました", "また最初から話しかけてね");
+      hint.textContent = "ボタンを押して話してください";
+      conversationResetStatus.textContent = "リセット完了";
+      log("会話セッションをリセット");
+      setTimeout(() => { conversationResetStatus.textContent = "会話をリセット"; }, 3000);
+    } catch (error) {
+      conversationResetStatus.textContent = error.message || "リセット失敗";
+      log(`会話リセットエラー: ${error.message || error}`);
+    } finally {
+      conversationResetButton.disabled = false;
+    }
+  }
+
+  conversationResetButton.addEventListener("click", resetConversation);
 
   async function restartSystem() {
     restartButton.classList.remove("holding");

@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="ぽけっとロボット" />
     <title>ぽけっとロボット</title>
-    <link rel="stylesheet" href="styles.css?v=20260920-21" />
+    <link rel="stylesheet" href="styles.css?v=20260920-22" />
   </head>
   <body>
     <main class="robot-shell">
@@ -38,9 +38,14 @@
             <p><span class="service-dot" id="server-status-dot"></span>AI・音声 <strong id="server-status">確認中</strong></p>
             <p><span class="service-dot" id="hayamimi-status-dot"></span>Hayamimi <strong id="hayamimi-status">確認中</strong></p>
           </div>
-          <button class="restart-button" id="restart-button" type="button">
-            <span id="restart-status">3秒長押しで再起動</span>
-          </button>
+          <div class="restart-actions">
+            <button class="conversation-reset-button" id="conversation-reset-button" type="button">
+              <span id="conversation-reset-status">会話をリセット</span>
+            </button>
+            <button class="restart-button" id="restart-button" type="button">
+              <span id="restart-status">3秒長押しで再起動</span>
+            </button>
+          </div>
         </section>
 
         <nav class="belly-tabs" aria-label="表示切り替え">
@@ -56,6 +61,6 @@
         </svg>
       </button>
     </main>
-    <script src="app.js?v=20260920-36" defer></script>
+    <script src="app.js?v=20260920-38" defer></script>
   </body>
 </html>
